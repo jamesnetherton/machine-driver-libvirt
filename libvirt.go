@@ -13,33 +13,33 @@ import (
 	"text/template"
 	"time"
 
-	libvirt "github.com/libvirt/libvirt-go"
+	"github.com/libvirt/libvirt-go"
 
 	// Machine-drivers
+	"github.com/code-ready/machine/libmachine/mcnutils"
 	"github.com/code-ready/machine/libmachine/drivers"
 	"github.com/code-ready/machine/libmachine/log"
 	"github.com/code-ready/machine/libmachine/mcnflag"
 	"github.com/code-ready/machine/libmachine/state"
-
-	// CRC system bundle
-	"github.com/code-ready/crc/pkg/crc/constants"
-	"github.com/code-ready/crc/pkg/crc/machine/bundle"
-	crclibvirt "github.com/code-ready/crc/pkg/crc/machine/libvirt"
 )
 
 type Driver struct {
 	*drivers.BaseDriver
 
-	// CRC System bundle
-    BundlePath       string
+	// SSH key Path
+	SSHKeyPath string
 
-    // Driver specific configuration
-	Memory           int
-	CPU              int
-	Network          string
-	DiskPath         string
-	CacheMode        string
-	IOMode           string
+	// CRC System bundle
+	BundlePath string
+
+	// Driver specific configuration
+	Memory      int
+	CPU         int
+	Network     string
+	DiskPath    string
+	DiskPathURL string
+	CacheMode   string
+	IOMode      string
 
 	// Libvirt connection and state
 	connectionString string
@@ -53,35 +53,45 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 		mcnflag.IntFlag{
 			Name:  "crc-libvirt-memory",
 			Usage: "Size of memory for host in MB",
-			Value: constants.DefaultMemory,
+			Value: DefaultMemory,
 		},
 		mcnflag.IntFlag{
 			Name:  "crc-libvirt-cpu-count",
 			Usage: "Number of CPUs",
-			Value: constants.DefaultCPUs,
+			Value: DefaultCPUs,
 		},
 		mcnflag.StringFlag{
 			Name:  "crc-libvirt-network",
 			Usage: "Name of network to connect to",
-			Value: crclibvirt.DefaultNetwork,
+			Value: DefaultNetwork,
 		},
 		mcnflag.StringFlag{
 			Name:  "crc-libvirt-cachemode",
 			Usage: "Disk cache mode: default, none, writethrough, writeback, directsync, or unsafe",
-			Value: crclibvirt.DefaultCacheMode,
+			Value: DefaultCacheMode,
 		},
 		mcnflag.StringFlag{
 			Name:  "crc-libvirt-iomode",
 			Usage: "Disk IO mode: threads, native",
-			Value: crclibvirt.DefaultIOMode,
+			Value: DefaultIOMode,
 		},
 		mcnflag.StringFlag{
 			EnvVar: "CRC_LIBVIRT_SSHUSER",
 			Name:   "crc-libvirt-sshuser",
 			Usage:  "SSH username",
-			Value:  constants.DefaultSSHUser,
+			Value:  DefaultSSHUser,
 		},
 	}
+}
+
+type DomainConfig struct {
+	DomainName string
+	Memory     int
+	CPU        int
+	CacheMode  string
+	IOMode     string
+	DiskPath   string
+	Network    string
 }
 
 func (d *Driver) GetMachineName() string {
@@ -93,12 +103,12 @@ func (d *Driver) GetSSHHostname() (string, error) {
 }
 
 func (d *Driver) GetSSHKeyPath() string {
-	return "" //d.ResolveStorePath("id_rsa")
+	return d.SSHKeyPath
 }
 
 func (d *Driver) GetSSHPort() (int, error) {
 	if d.SSHPort == 0 {
-		d.SSHPort = constants.DefaultSSHPort
+		d.SSHPort = DefaultSSHPort
 	}
 
 	return d.SSHPort, nil
@@ -106,7 +116,7 @@ func (d *Driver) GetSSHPort() (int, error) {
 
 func (d *Driver) GetSSHUsername() string {
 	if d.SSHUser == "" {
-		d.SSHUser = constants.DefaultSSHUser
+		d.SSHUser = DefaultSSHUser
 	}
 
 	return d.SSHUser
@@ -159,82 +169,46 @@ func (d *Driver) validateNetwork() error {
 		return err
 	}
 	network, err := conn.LookupNetworkByName(d.Network)
-	if err == nil {
-		xmldoc, err := network.GetXMLDesc(0)
+	if err != nil {
+		return fmt.Errorf("Use 'crc setup' for define the network, %+v", err)
+	}
+	xmldoc, err := network.GetXMLDesc(0)
+	if err != nil {
+		return err
+	}
+	/* XML structure:
+	<network>
+	    ...
+	    <ip address='a.b.c.d' prefix='24'>
+	        <dhcp>
+	            <host mac='' name='' ip=''/>
+	        </dhcp>
+	*/
+	type Ip struct {
+		Address string `xml:"address,attr"`
+		Netmask string `xml:"prefix,attr"`
+	}
+	type Network struct {
+		Ip Ip `xml:"ip"`
+	}
+
+	var nw Network
+	err = xml.Unmarshal([]byte(xmldoc), &nw)
+	if err != nil {
+		return err
+	}
+
+	if nw.Ip.Address == "" {
+		return fmt.Errorf("%s network doesn't have DHCP configured", d.Network)
+	}
+	// Corner case, but might happen...
+	if active, err := network.IsActive(); !active {
+		log.Debugf("Reactivating network: %s", err)
+		err = network.Create()
 		if err != nil {
+			log.Warnf("Failed to Start network: %s", err)
 			return err
 		}
-		/* XML structure:
-		<network>
-		    ...
-		    <ip address='a.b.c.d' prefix='24'>
-		        <dhcp>
-		            <host mac='' name='' ip=''/>
-		        </dhcp>
-		*/
-		type Ip struct {
-			Address string `xml:"address,attr"`
-			Netmask string `xml:"prefix,attr"`
-		}
-		type Network struct {
-			Ip Ip `xml:"ip"`
-		}
-
-		var nw Network
-		err = xml.Unmarshal([]byte(xmldoc), &nw)
-		if err != nil {
-			return err
-		}
-
-		if nw.Ip.Address == "" {
-			return fmt.Errorf("%s network doesn't have DHCP configured properly", d.Network)
-		}
-		// Corner case, but might happen...
-		if active, err := network.IsActive(); !active {
-			log.Debugf("Reactivating network: %s", err)
-			err = network.Create()
-			if err != nil {
-				log.Warnf("Failed to Start network: %s", err)
-				return err
-			}
-		}
-		return nil
-	}
-	// TODO - try a couple pre-defined networks and look for conflicts before
-	//        settling on one
-
-
-	log.Debugf("Defining network...")
-	tmpl, err := template.New("network").Parse(crclibvirt.NetworkTemplate)
-	if err != nil {
-		return err
-	}
-
-	config := crclibvirt.NetworkConfig{
-		DomainName: d.MachineName,
-		MAC:        crclibvirt.MACAddress,
-		IP:         crclibvirt.IPAddress,
-	}
-
-	var xml bytes.Buffer
-	err = tmpl.Execute(&xml, config)
-	if err != nil {
-		return err
-	}
-
-	network, err = conn.NetworkDefineXML(xml.String())
-	if err != nil {
-		log.Errorf("Failed to create network: %s", err)
-		return nil
-	}
-	err = network.SetAutostart(true)
-	if err != nil {
-		log.Warnf("Failed to set network to autostart: %s", err)
-	}
-	err = network.Create()
-	if err != nil {
-		log.Warnf("Failed to Start network: %s", err)
-		return err
 	}
 	return nil
 }
@@ -264,6 +238,10 @@ func (d *Driver) PreCreateCheck() error {
 }
 
 func (d *Driver) Create() error {
+	b2dutils := mcnutils.NewB2dUtils(d.StorePath)
+	if err := b2dutils.CopyDiskToMachineDir(d.DiskPathURL, d.MachineName); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(d.ResolveStorePath("."), 0755); err != nil {
 		return err
@@ -285,19 +263,13 @@ func (d *Driver) Create() error {
 		}
 	}
 
-	log.Debugf("Extracting system bundle...")
-	err := bundle.Extract(d.BundlePath, d.ResolveStorePath("."))
-	if err != nil {
-		return err
-	}
-
 	log.Debugf("Defining VM...")
-	tmpl, err := template.New("domain").Parse(crclibvirt.DomainTemplate)
+	tmpl, err := template.New("domain").Parse(DomainTemplate)
 	if err != nil {
 		return err
 	}
 
-	config := crclibvirt.DomainConfig{
+	config := DomainConfig{
 		DomainName: d.MachineName,
 		Memory:     d.Memory,
 		CPU:        d.CPU,
@@ -325,6 +297,8 @@ func (d *Driver) Create() error {
 	}
 	d.VM = vm
 	d.vmLoaded = true
+	log.Debugf("Adding the file: %s", filepath.Join(d.ResolveStorePath("."), fmt.Sprintf(".%s-exist", d.MachineName)))
+	os.OpenFile(filepath.Join(d.ResolveStorePath("."), fmt.Sprintf(".%s-exist", d.MachineName)), os.O_RDONLY|os.O_CREATE, 0666)
 
 	return d.Start()
 }
@@ -598,11 +572,11 @@ func (d *Driver) GetIP() (string, error) {
 
 func NewDriver(hostName, storePath string) drivers.Driver {
 	return &Driver{
-		Network: crclibvirt.DefaultNetwork,
+		Network: DefaultNetwork,
 		BaseDriver: &drivers.BaseDriver{
 			MachineName: hostName,
 			StorePath:   storePath,
-			SSHUser:     constants.DefaultSSHUser,
+			SSHUser:     DefaultSSHUser,
 		},
 	}
 }
