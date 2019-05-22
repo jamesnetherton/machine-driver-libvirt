@@ -48,6 +48,13 @@ const (
       <source network='{{.Network}}'/>
       <model type='virtio'/>
     </interface>
+    <console type='pty'></console>
+    <channel type='pty'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+    <rng model='virtio'>
+      <backend model='random'>/dev/random</backend>
+    </rng>
   </devices>
 </domain>`
 )
