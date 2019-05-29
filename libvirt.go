@@ -346,7 +346,7 @@ func (d *Driver) Stop() error {
 			log.Warnf("Failed to gracefully shutdown VM")
 			return err
 		}
-		for i := 0; i < 90; i++ {
+		for i := 0; i < 120; i++ {
 			time.Sleep(time.Second)
 			s, _ := d.GetState()
 			log.Debugf("VM state: %s", s)
