@@ -318,7 +318,10 @@ func (d *Driver) Start() error {
 
 	for i := 0; i < 90; i++ {
 		time.Sleep(time.Second)
-		ip, _ := d.GetIP()
+		ip, err := d.GetIP()
+		if err != nil {
+			return fmt.Errorf("%v: getting ip during machine start", err)
+		}
 		if ip != "" {
 			// Add a second to let things settle
 			time.Sleep(time.Second)
