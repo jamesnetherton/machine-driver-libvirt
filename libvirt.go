@@ -316,20 +316,29 @@ func (d *Driver) Start() error {
 	// They wont start immediately
 	time.Sleep(5 * time.Second)
 
-	for i := 0; i < 90; i++ {
-		time.Sleep(time.Second)
+	for i := 0; i < 40; i++ {
 		ip, err := d.GetIP()
 		if err != nil {
 			return fmt.Errorf("%v: getting ip during machine start", err)
 		}
+
+		if ip == "" {
+			log.Debugf("Waiting for machine to come up %d/%d", i, 40)
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
 		if ip != "" {
-			// Add a second to let things settle
-			time.Sleep(time.Second)
-			return nil
+			log.Infof("Found IP for machine: %s", ip)
+			d.IPAddress = ip
+			break
 		}
 		log.Debugf("Waiting for the VM to come up... %d", i)
 	}
-	log.Warnf("Unable to determine VM's IP address, did it fail to boot?")
+
+	if d.IPAddress == "" {
+		log.Warnf("Unable to determine VM's IP address, did it fail to boot?")
+	}
 	return nil
 }
 
