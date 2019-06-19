@@ -530,6 +530,13 @@ func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 
 func (d *Driver) GetIP() (string, error) {
 	log.Debugf("GetIP called for %s", d.MachineName)
+	s, err := d.GetState()
+	if err != nil {
+		return "", fmt.Errorf("%v : machine in unknown state", err)
+	}
+	if s != state.Running {
+		return "", errors.New("host is not running")
+	}
 	mac, err := d.getMAC()
 	if err != nil {
 		return "", err
