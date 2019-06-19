@@ -485,30 +485,6 @@ func (d *Driver) getMAC() (string, error) {
 	return dom.Devices.Interfaces[0].Mac.Address, nil
 }
 
-func (d *Driver) getIPByMACFromLeaseFile(mac string) (string, error) {
-	leaseFile := fmt.Sprintf(dnsmasqLeases, d.Network)
-	data, err := ioutil.ReadFile(leaseFile)
-	if err != nil {
-		log.Debugf("Failed to retrieve dnsmasq leases from %s", leaseFile)
-		return "", err
-	}
-	for lineNum, line := range strings.Split(string(data), "\n") {
-		if len(line) == 0 {
-			continue
-		}
-		entries := strings.Split(line, " ")
-		if len(entries) < 3 {
-			log.Warnf("Malformed dnsmasq line %d", lineNum+1)
-			return "", errors.New("Malformed dnsmasq file")
-		}
-		if strings.ToLower(entries[1]) == strings.ToLower(mac) {
-			log.Debugf("IP address: %s", entries[2])
-			return entries[2], nil
-		}
-	}
-	return "", nil
-}
-
 func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 	conn, err := d.getConn()
 	if err != nil {
@@ -558,16 +534,8 @@ func (d *Driver) GetIP() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	/*
-	 * TODO - Figure out what version of libvirt changed behavior and
-	 *        be smarter about selecting which algorithm to use
-	 */
-	ip, err := d.getIPByMACFromLeaseFile(mac)
-	if ip == "" {
-		ip, err = d.getIPByMacFromSettings(mac)
-	}
 
-	return ip, err
+	return d.getIPByMacFromSettings(mac)
 }
 
 func NewDriver(hostName, storePath string) drivers.Driver {
