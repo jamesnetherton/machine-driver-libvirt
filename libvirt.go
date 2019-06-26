@@ -521,6 +521,11 @@ func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 	}
 	var s []Lease
 
+	// In case of status file is empty then don't try to unmarshal data
+	if len(data) == 0 {
+		return "", nil
+	}
+
 	err = json.Unmarshal(data, &s)
 	if err != nil {
 		log.Warnf("Failed to decode dnsmasq lease status: %s", err)
