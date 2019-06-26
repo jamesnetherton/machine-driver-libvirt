@@ -316,17 +316,29 @@ func (d *Driver) Start() error {
 	// They wont start immediately
 	time.Sleep(5 * time.Second)
 
-	for i := 0; i < 90; i++ {
-		time.Sleep(time.Second)
-		ip, _ := d.GetIP()
+	for i := 0; i < 40; i++ {
+		ip, err := d.GetIP()
+		if err != nil {
+			return fmt.Errorf("%v: getting ip during machine start", err)
+		}
+
+		if ip == "" {
+			log.Debugf("Waiting for machine to come up %d/%d", i, 40)
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
 		if ip != "" {
-			// Add a second to let things settle
-			time.Sleep(time.Second)
-			return nil
+			log.Infof("Found IP for machine: %s", ip)
+			d.IPAddress = ip
+			break
 		}
 		log.Debugf("Waiting for the VM to come up... %d", i)
 	}
-	log.Warnf("Unable to determine VM's IP address, did it fail to boot?")
+
+	if d.IPAddress == "" {
+		log.Warnf("Unable to determine VM's IP address, did it fail to boot?")
+	}
 	return nil
 }
 
@@ -485,30 +497,6 @@ func (d *Driver) getMAC() (string, error) {
 	return dom.Devices.Interfaces[0].Mac.Address, nil
 }
 
-func (d *Driver) getIPByMACFromLeaseFile(mac string) (string, error) {
-	leaseFile := fmt.Sprintf(dnsmasqLeases, d.Network)
-	data, err := ioutil.ReadFile(leaseFile)
-	if err != nil {
-		log.Debugf("Failed to retrieve dnsmasq leases from %s", leaseFile)
-		return "", err
-	}
-	for lineNum, line := range strings.Split(string(data), "\n") {
-		if len(line) == 0 {
-			continue
-		}
-		entries := strings.Split(line, " ")
-		if len(entries) < 3 {
-			log.Warnf("Malformed dnsmasq line %d", lineNum+1)
-			return "", errors.New("Malformed dnsmasq file")
-		}
-		if strings.ToLower(entries[1]) == strings.ToLower(mac) {
-			log.Debugf("IP address: %s", entries[2])
-			return entries[2], nil
-		}
-	}
-	return "", nil
-}
-
 func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 	conn, err := d.getConn()
 	if err != nil {
@@ -554,20 +542,19 @@ func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 
 func (d *Driver) GetIP() (string, error) {
 	log.Debugf("GetIP called for %s", d.MachineName)
+	s, err := d.GetState()
+	if err != nil {
+		return "", fmt.Errorf("%v : machine in unknown state", err)
+	}
+	if s != state.Running {
+		return "", errors.New("host is not running")
+	}
 	mac, err := d.getMAC()
 	if err != nil {
 		return "", err
 	}
-	/*
-	 * TODO - Figure out what version of libvirt changed behavior and
-	 *        be smarter about selecting which algorithm to use
-	 */
-	ip, err := d.getIPByMACFromLeaseFile(mac)
-	if ip == "" {
-		ip, err = d.getIPByMacFromSettings(mac)
-	}
 
-	return ip, err
+	return d.getIPByMacFromSettings(mac)
 }
 
 func NewDriver(hostName, storePath string) drivers.Driver {
