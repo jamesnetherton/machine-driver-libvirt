@@ -316,14 +316,14 @@ func (d *Driver) Start() error {
 	// They wont start immediately
 	time.Sleep(5 * time.Second)
 
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 60; i++ {
 		ip, err := d.GetIP()
 		if err != nil {
 			return fmt.Errorf("%v: getting ip during machine start", err)
 		}
 
 		if ip == "" {
-			log.Debugf("Waiting for machine to come up %d/%d", i, 40)
+			log.Debugf("Waiting for machine to come up %d/%d", i, 60)
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -520,6 +520,11 @@ func (d *Driver) getIPByMacFromSettings(mac string) (string, error) {
 		// Other unused fields omitted
 	}
 	var s []Lease
+
+	// In case of status file is empty then don't try to unmarshal data
+	if len(data) == 0 {
+		return "", nil
+	}
 
 	err = json.Unmarshal(data, &s)
 	if err != nil {
