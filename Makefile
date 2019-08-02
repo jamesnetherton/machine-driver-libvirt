@@ -3,7 +3,7 @@ CMD=crc-driver-libvirt
 GO_VERSION=1.11.6
 DESCRIBE=$(shell git describe --tags)
 
-TARGETS=$(addprefix $(CMD)-, centos7 ubuntu16.04)
+TARGETS=$(addprefix $(CMD)-, debian)
 
 build: $(TARGETS)
 
